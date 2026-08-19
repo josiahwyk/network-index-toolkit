@@ -2,8 +2,8 @@
 
 Turn your LinkedIn export (plus, optionally, a Google Calendar export and your
 own notes) into a searchable index of your professional network — one
-markdown file per person, sitting in your own notes app, that you or an LLM
-can query later ("who do I know in IP law?", "who works in music venues?").
+markdown file per person, sitting in your own notes app (e.g. Obsidian), that you or an LLM
+can query later ("who do I know in IP law?", "who works in fintech in my network?", "who offers design services as a freelance in my network?").
 
 Everything runs locally. Your export never leaves your machine, and nothing
 here calls an external API except the one LLM step you choose to run
