@@ -20,6 +20,17 @@ of the frontmatter, but is a special case: every re-run reads the existing
 file's current tier_override value first and carries it forward unchanged,
 so your manual judgment is never overwritten. Leave it blank to record
 nothing.
+
+company/position corrections work differently to tier_override, on purpose:
+tier_override is blank by default, so any non-blank value on disk is
+unambiguously a manual entry, safe to read straight off the file. company
+and position are NOT blank by default — they're always computed from your
+LinkedIn export — so there's no way to tell "you hand-edited this" apart
+from "your LinkedIn export legitimately changed" by just diffing the file.
+Get that wrong and a real job change silently never updates again. So
+company/position corrections go through manual_add.py instead and are
+stored in manual_entries.json as an explicit, unambiguous override — see
+manual_add.py's docstring.
 """
 import json, os, re
 import yaml
@@ -45,7 +56,8 @@ else:
     summaries = {}
 
 # Manual entries: off-platform interactions (calls, coffees, events) logged
-# via manual_add.py. Keyed by matched LinkedIn URL if the person already
+# via manual_add.py, PLUS explicit company/position/tier corrections for an
+# existing person. Keyed by matched LinkedIn URL if the person already
 # exists, or a synthetic "manual:<name>" key for people with no LinkedIn
 # connection on file at all.
 manual_path = f"{OUT}/manual_entries.json"
@@ -74,6 +86,8 @@ for key, m in manual_entries.items():
     if key in people:
         p = people[key]
         p["manual_meetings"] = m.get("manual_meetings", [])
+        p["company_override"] = m.get("company_override", "")
+        p["position_override"] = m.get("position_override", "")
         if "manual" not in p["sources"]:
             p["sources"] = p["sources"] + ["manual"]
     else:
@@ -96,6 +110,8 @@ for key, m in manual_entries.items():
             "dedicated_notes": [],
             "journal_mentions": [],
             "manual_meetings": m.get("manual_meetings", []),
+            "company_override": "",
+            "position_override": "",
         }
 
 # Load the existing filename registry so identity (URL -> filename) is stable
@@ -149,12 +165,20 @@ for url in new_urls:
     url_to_filename[url] = final + ".md"
 
 
+def effective_company(p):
+    return p.get("company_override") or p.get("company") or ""
+
+
+def effective_position(p):
+    return p.get("position_override") or p.get("position") or ""
+
+
 def build_frontmatter(p, tier_override):
     return {
         "name": p["full_name"],
         "linkedin_url": p.get("linkedin_url") or "",
-        "company": p.get("company") or "",
-        "position": p.get("position") or "",
+        "company": effective_company(p),
+        "position": effective_position(p),
         "connected": p.get("connected_on") or "",
         "first_contact": (p["messages"]["first_date"] if p["messages"] and p["messages"].get("first_date") else "") or "",
         "last_contact": (p["messages"]["last_date"] if p["messages"] and p["messages"].get("last_date") else "") or "",
@@ -195,13 +219,15 @@ def build_auto_zone(url, p, tier_override):
     fm = build_frontmatter(p, tier_override)
     fm_yaml = yaml.safe_dump(fm, sort_keys=False, allow_unicode=True, default_flow_style=None)
 
+    company = effective_company(p)
+    position = effective_position(p)
     position_line = ""
-    if p.get("position") and p.get("company"):
-        position_line = f"{p['position']} at {p['company']}"
-    elif p.get("position"):
-        position_line = p["position"]
-    elif p.get("company"):
-        position_line = p["company"]
+    if position and company:
+        position_line = f"{position} at {company}"
+    elif position:
+        position_line = position
+    elif company:
+        position_line = company
 
     s = summaries.get(url, {})
     ctx = (s.get("context") or "").strip()

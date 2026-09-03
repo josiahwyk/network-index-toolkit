@@ -1,19 +1,34 @@
 """
-One-off manual entry for an off-platform interaction (call, coffee, event —
-anything NOT already captured by LinkedIn DMs, email, or calendar exports,
-which are covered automatically by the other scripts).
+One-off manual entry for:
+  (a) an off-platform interaction (call, coffee, event) not already captured
+      by LinkedIn DMs, email, or calendar exports, and/or
+  (b) a correction to an EXISTING person's stale LinkedIn export data
+      (company/position). Your LinkedIn export is a snapshot — someone's
+      current job may not be what's on file, and no amount of search fixes
+      a fact that was never written down anywhere in your data at all.
 
 Usage: edit the ENTRY dict below, then run:
     python3 manual_add.py
 
-This writes/updates a record in manual_entries.json, keyed by the person's
-LinkedIn URL if they already exist in the index (matched by exact name,
-disambiguated by company if the name is ambiguous), or by a synthetic
-"manual:<name>" key if they're a genuinely new contact with no LinkedIn
-connection on file. Re-run generate.py afterwards to materialize/update the
-file — the idempotency/manual-notes guarantees still hold.
+At least one of (date+summary), manual_context, or (company_override /
+position_override) must be set. full_name is always required.
 
-Write SUMMARY as a short written summary of the interaction (skip
+Corrections only apply to an EXISTING matched connection (matched by exact
+name, disambiguated by company if ambiguous) — there's nothing to correct on
+a brand-new synthetic person, so overrides are ignored (with a warning) if no
+match is found.
+
+Why this goes through a script instead of just hand-editing the company/
+position fields directly in the file, the way tier_override works:
+tier_override is blank by default, so any non-blank value on disk is
+unambiguously a manual entry. company/position are NOT blank by default —
+they're recomputed from your LinkedIn export every run — so generate.py has
+no way to tell "you edited this on purpose" apart from "your LinkedIn export
+legitimately changed" just by diffing the file. Get that wrong and a real
+job change silently stops ever being picked up again. Storing the override
+explicitly in manual_entries.json avoids that ambiguity.
+
+Claude writes SUMMARY as a short written summary of the interaction (skip
 scheduling/pleasantries, keep what you actually discussed/do) — never a raw
 paste of the conversation.
 """
@@ -25,12 +40,14 @@ OUT = config.OUTPUT_DIR
 
 # --- EDIT THIS BLOCK PER ENTRY ---
 ENTRY = {
-    "full_name": "",       # required, exact full name as it should appear
-    "company": "",         # optional
-    "position": "",        # optional
-    "date": "",            # required, YYYY-MM-DD, date of the interaction
-    "summary": "",         # required, one written summary line/paragraph
-    "manual_context": "",  # optional, short addition to the Context section
+    "full_name": "",           # required, exact full name as it should appear
+    "company": "",             # optional, only used if this becomes a NEW synthetic person
+    "position": "",            # optional, only used if this becomes a NEW synthetic person
+    "date": "",                # required if logging a meeting, else leave blank
+    "summary": "",             # required if logging a meeting, else leave blank
+    "manual_context": "",      # optional, short addition to the Context section
+    "company_override": "",    # optional, corrects an EXISTING person's company
+    "position_override": "",   # optional, corrects an EXISTING person's position
 }
 # --- END EDIT BLOCK ---
 
@@ -55,8 +72,19 @@ def find_match(full_name, company=""):
 
 
 def main(entry):
-    if not entry["full_name"] or not entry["date"] or not entry["summary"]:
-        print("ERROR: full_name, date, and summary are required.")
+    if not entry["full_name"]:
+        print("ERROR: full_name is required.")
+        sys.exit(1)
+
+    has_meeting = bool(entry.get("date") or entry.get("summary"))
+    if has_meeting and not (entry.get("date") and entry.get("summary")):
+        print("ERROR: if logging a meeting, both date and summary are required.")
+        sys.exit(1)
+
+    has_override = bool(entry.get("company_override") or entry.get("position_override"))
+
+    if not has_meeting and not entry.get("manual_context") and not has_override:
+        print("ERROR: nothing to do — set date+summary, manual_context, or an override field.")
         sys.exit(1)
 
     manual_path = f"{OUT}/manual_entries.json"
@@ -69,6 +97,10 @@ def main(entry):
     matched_url = find_match(entry["full_name"], entry.get("company", ""))
     key = matched_url if matched_url else f"manual:{entry['full_name'].strip()}"
 
+    if has_override and not matched_url:
+        print(f"WARNING: no existing connection matched for '{entry['full_name']}' — "
+              f"override fields are ignored for new/synthetic people (nothing to correct).")
+
     if key not in manual_entries:
         manual_entries[key] = {
             "full_name": entry["full_name"],
@@ -76,23 +108,36 @@ def main(entry):
             "position": entry.get("position", ""),
             "manual_meetings": [],
             "manual_context": "",
+            "company_override": "",
+            "position_override": "",
         }
 
-    manual_entries[key]["manual_meetings"].append({
-        "date": entry["date"],
-        "summary": entry["summary"],
-    })
+    if has_meeting:
+        manual_entries[key]["manual_meetings"].append({
+            "date": entry["date"],
+            "summary": entry["summary"],
+        })
+
     if entry.get("manual_context"):
         existing = manual_entries[key].get("manual_context", "")
         manual_entries[key]["manual_context"] = (
             f"{existing} {entry['manual_context']}".strip() if existing else entry["manual_context"]
         )
 
+    if matched_url and has_override:
+        if entry.get("company_override"):
+            manual_entries[key]["company_override"] = entry["company_override"]
+        if entry.get("position_override"):
+            manual_entries[key]["position_override"] = entry["position_override"]
+
     with open(manual_path, "w") as f:
         json.dump(manual_entries, f, indent=2)
 
     status = "matched existing connection" if matched_url else "new contact, no LinkedIn record — synthetic entry"
-    print(f"Logged manual interaction for {entry['full_name']} ({status}, key={key})")
+    print(f"Logged manual entry for {entry['full_name']} ({status}, key={key})")
+    if matched_url and has_override:
+        applied = [k for k in ("company_override", "position_override") if entry.get(k)]
+        print(f"  overrides set: {applied} — will apply on next generate.py run")
     print("Run generate.py to materialize the change.")
 
 

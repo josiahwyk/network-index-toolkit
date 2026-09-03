@@ -2,8 +2,10 @@
 
 Turn your LinkedIn export (plus, optionally, a Google Calendar export and your
 own notes) into a searchable index of your professional network — one
-markdown file per person, sitting in your own notes app, that you or an LLM
-can query later ("who do I know in IP law?", "who works in music venues?").
+markdown file per person, sitting in your own notes app (e.g. Obsidian), that
+you or an LLM can query later ("who do I know in IP law?", "who works in
+fintech in my network?", "who offers design services as a freelance in my
+network?").
 
 Everything runs locally. Your export never leaves your machine, and nothing
 here calls an external API except the one LLM step you choose to run
@@ -29,13 +31,15 @@ This is scripts, not an app. There's no UI. It:
    message/note/calendar content (a calendar event, a dedicated vault note,
    or 5+ two-way messages — used only to bound this step to people with real
    signal, not a relationship judgment) for you to feed to an LLM of your
-   choice to write short, accurate summaries. **This one step needs an LLM**
-   — writing an honest summary of what you discussed with someone requires
+   choice to write short, accurate summaries. **This one step needs an LLM** —
+   writing an honest summary of what you discussed with someone requires
    understanding real conversation content, which is judgment, not string
    matching. Bring your own (Claude Code, a Cowork session, the API, ChatGPT,
    whatever — copy the JSON in, copy the JSON out).
 4. Writes one markdown file per person into your vault, with your own
    manually-added notes always preserved on re-runs.
+5. Optionally, lets you search across everyone's file at once (`query.py`) —
+   see below for what it can and can't do.
 
 ## Requirements
 
@@ -101,8 +105,70 @@ from the existing file and carried forward untouched, even though it lives in
 the auto-generated frontmatter block.
 
 To log an off-platform interaction (a call, coffee, event — anything not in
-your LinkedIn export), edit the `ENTRY` dict at the top of `manual_add.py`
-and run it, then re-run `generate.py`.
+your LinkedIn export), or to correct an existing person's stale
+company/position, edit the `ENTRY` dict at the top of `manual_add.py` and run
+it, then re-run `generate.py`. See "Correcting stale data" below.
+
+## Searching your index (`query.py`)
+
+```bash
+python3 query.py "who runs a digital marketing agency"
+python3 query.py "who does Google Ads" --limit 20
+```
+
+Searches the full text of every generated file — not just company/position,
+also the Context/Conversation summary/Notes sections — and expands each
+search word through a small synonym/spacing-variant list (so "trademark"
+also catches "trade mark", "agency" also catches "consultancy", etc.).
+Results are a ranked review list, split into "matched every word" and
+"matched some words," each with the evidence fields shown — never a silent
+pass/fail filter, and an explicit "no strong match" when nothing hits rather
+than a guess.
+
+**What it can't do, no matter how wide the synonym list gets:**
+
+1. Two genuinely unrelated words for the same real role, with no shared
+   vocabulary and no synonym pair anyone thought to add ("growth hacker" vs.
+   "demand generation lead").
+2. Recognising a company as relevant from world knowledge your file's text
+   doesn't contain (a stylised or unfamiliar company name with no
+   descriptive word anywhere near it).
+3. Compositional questions needing reasoning about a company as an entity
+   ("who works somewhere that just raised a round"), not matching a word.
+4. Cross-file evidence — a fact about person X that's only written down in
+   person Y's file. This tool searches one file at a time; it has no way to
+   connect a fact that lives in someone else's record.
+
+Only a full read by an LLM over your generated files solves 1–3, and only if
+the answer is present somewhere in your own text or the model's background
+knowledge. Nothing solves a fact nobody ever wrote down anywhere — that's a
+source-data gap, not a search problem (see "Correcting stale data" below).
+
+## Correcting stale data
+
+LinkedIn export data is a snapshot — someone's current job may not be what's
+on file, and that's not something better search can fix. `manual_add.py`
+supports correcting an existing person's `company`/`position` directly:
+
+```python
+ENTRY = {
+    "full_name": "Jane Smith",
+    "company_override": "New Company Inc",
+    "position_override": "Founder",
+    # ... leave date/summary/other fields blank if you're only correcting data
+}
+```
+
+Run `manual_add.py`, then `generate.py` — the correction applies to
+frontmatter and the heading on every future run. This works differently to
+`tier_override`, on purpose: `tier_override` is blank by default, so any
+non-blank value on disk is unambiguously a manual entry, safe to read
+straight off the file. `company`/`position` are NOT blank by default —
+they're recomputed from your LinkedIn export every run — so there's no way
+to tell "you edited this on purpose" apart from "your LinkedIn export
+legitimately changed" by just diffing the file. Storing the correction
+explicitly in `manual_entries.json` avoids that ambiguity — a real job
+change on your next export still updates normally.
 
 ## File format
 
@@ -170,14 +236,12 @@ tool that reads YAML frontmatter) — filter by `met_in_person`,
   bug this toolkit works around — if your calendar CN fields are more
   consistently populated with real names, matching will work much better for
   you.
-- **No semantic/open-ended query layer.** This toolkit generates the files;
-  it doesn't include a tool for answering loose questions like "who runs a
-  marketing agency" or "who's senior in product." Regex/keyword search over
-  company and position text will systematically miss anyone whose company
-  name or title doesn't literally contain your search term (a company called
-  "Zebra3" won't match a search for "agency" even if it is one). Answering
-  those questions well needs an LLM reading the actual records, not string
-  matching — not built here yet.
+- **`query.py`'s ceiling** — see the "Searching your index" section above.
+  Keyword search, however wide, can't catch vocabulary it wasn't told about,
+  can't infer what an unfamiliar company name means, can't reason about a
+  company as an entity, and can't connect a fact written in someone else's
+  file. A full LLM read over your generated files is the fallback for
+  anything important enough that you don't trust a negative result on.
 - Positions.csv in the LinkedIn export is your own job history, not other
   people's, so it isn't parsed.
 - Name matching is exact-match with disambiguation by company where
@@ -193,7 +257,9 @@ tool that reads YAML frontmatter) — filter by `met_in_person`,
 Nothing in this toolkit sends your data anywhere. `config.py`, your LinkedIn
 export, and the `output/` working directory are all gitignored by default —
 double-check before pushing your own fork anywhere public that you haven't
-accidentally committed real data.
+accidentally committed real data. `query.py` and the full-LLM-read fallback
+both only ever read files already inside your vault; neither makes any
+network call.
 
 ## License
 
