@@ -263,4 +263,4 @@ network call.
 
 ## License
 
-MIT — see LICENSE.
+All rights reserved. See [LICENSE](LICENSE). No permission is granted to use, copy, modify or distribute this code without prior written permission.
